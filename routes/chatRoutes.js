@@ -4,6 +4,27 @@ const Chat = require('../model/Chats');
 const Message = require('../model/Message');
 const { protect } = require('../middleware/authMiddleware');
 
+// Get all chats for the authenticated user
+router.get('/', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    console.log(`Fetching chats for userId: ${userId}`);
+
+
+    const chats = await Chat.find({
+      participants: userId,
+    })
+      .populate('participants')
+      .sort({ updatedAt: -1 })
+      .lean();
+
+      console.log(`Found ${chats.length} chats:`, JSON.stringify(chats, null, 2));
+    res.json(chats);
+  } catch (error) {
+    console.error('Error fetching chats:', error);
+    res.status(500).json({ error: 'Failed to fetch chats' });
+  }
+});
 
 // Get chat history
 router.get('/:chatId/messages', protect, async (req, res) => {
@@ -48,7 +69,7 @@ router.post('/', protect, async (req, res) => {
         chatId,
         participants,
         lastMessage: '',
-        updatedAt: new Date()
+        updatedAt: new Date(),
       });
 
       // Populate participants for response
@@ -59,6 +80,27 @@ router.post('/', protect, async (req, res) => {
   } catch (error) {
     console.error('Error creating chat:', error);
     res.status(500).json({ error: 'Failed to create chat' });
+  }
+});
+
+// Delete a chat
+router.delete('/:chatId', protect, async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const userId = req.user._id;
+
+    const chat = await Chat.findOne({ chatId, participants: userId });
+    if (!chat) {
+      return res.status(404).json({ error: 'Chat not found' });
+    }
+
+    await Chat.deleteOne({ chatId });
+    await Message.deleteMany({ chatId });
+
+    res.json({ message: 'Chat deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting chat:', error);
+    res.status(500).json({ error: 'Failed to delete chat' });
   }
 });
 

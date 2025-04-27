@@ -16,6 +16,8 @@ const Chat = require('./model/Chats');
 const messageRoutes = require('./routes/messageRootes');
 const { generateLinkPreview } = require("./utils/linkPreview");
 const mongoose = require('mongoose');
+const blockRoutes = require("./routes/blockRoutes");
+
 
 
 dotenv.config();
@@ -40,11 +42,9 @@ const io = new Server(httpServer, {
 })
 
 const activeUsers = {};
+const seenMessages = new Set();
 
 io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
-
-
   const userId = socket.handshake.query.userId;
   if (!userId) {
     console.log('No userId provided, disconnecting');
@@ -56,98 +56,129 @@ io.on('connection', (socket) => {
   // Join user to their personal room
   socket.join(`user_${userId}`);
 
-  // Handle joining chat rooms
   socket.on('join-chat', (chatId) => {
     socket.join(`chat_${chatId}`);
-    console.log(`User ${userId} joined chat ${chatId}`);
   });
 
-  // Handle sending messages
-  socket.on('send-message', async ({ chatId, encryptedMessage, recipientId, files, link }) => {
+  // Handle marking messages as read
+  socket.on('mark-messages-read', async ({ chatId, userId }) => {
     try {
-      // Validate input
-      if (!chatId || !recipientId) {
-        throw new Error('Missing required fields');
+      const updated = await Message.updateMany(
+        { chatId, recipient: userId, status: { $in: ['sent', 'delivered'] } },
+        { $set: { status: 'read' } }
+      );
+
+      if (updated.modifiedCount > 0) {
+        io.to(`chat_${chatId}`).emit('message-read', { chatId, readerId: userId });
       }
+    } catch (error) {
+      console.error('Error marking messages as read:', error);
+    }
+  });
 
-      let linkPreview = null;
-      if (link) {
-        try {
-          linkPreview = await generateLinkPreview(link);
-        } catch (err) {
-          console.error('Error generating link preview:', err);
-        }
+  socket.on('message-delivered', async ({ messageId, chatId, recipientId }) => {
+    try {
+      if (seenMessages.has(messageId)) return;
+      seenMessages.add(messageId);
+
+      await Message.updateOne(
+        { _id: messageId, chatId, recipient: recipientId },
+        { $set: { status: 'delivered' } }
+      );
+
+      io.to(`chat_${chatId}`).emit('message-delivered', { messageId });
+    } catch (error) {
+      console.error('Error marking message as delivered:', error);
+    }
+  });
+
+  socket.on('typing', ({ chatId, senderId }) => {
+    socket.to(`chat_${chatId}`).emit('typing', { senderId });
+  });
+
+  socket.on('stop-typing', ({ chatId, senderId }) => {
+    socket.to(`chat_${chatId}`).emit('stop-typing', { senderId });
+  });
+
+  socket.on('send-message', async ({ chatId, messageData, recipientId }, callback) => {
+    try {
+      if (seenMessages.has(messageData._id)) {
+        console.log('Duplicate message ignored:', messageData._id);
+        return callback({ status: 'success', messageId: messageData._id });
       }
+      seenMessages.add(messageData._id);
 
-      const messageData = {
-        _id: encryptedMessage._id || new mongoose.Types.ObjectId(),
-        chatId,
-        sender: userId,
-        recipient: recipientId,
-        text: encryptedMessage?.text || '',
-        encrypted: true, // Add encrypted flag
-        files: files || [],
-        linkPreview,
-        status: 'sent',
-        createdAt: new Date()
-      };
+      const message = await Message.create({
+        ...messageData,
+        _id: messageData._id,
+      });
 
-      const message = await Message.create(messageData);
-
-      // Update chat's last message
-      let lastMessageText = '';
-      if (files && files.length > 0) {
-        const fileTypes = [...new Set(files.map(f => f.type))];
-        if (fileTypes.includes('image')) lastMessageText = '📷 Image';
-        else if (fileTypes.includes('video')) lastMessageText = '🎥 Video';
-        else if (fileTypes.includes('audio')) lastMessageText = '🔊 Audio';
-        else lastMessageText = '📄 File';
-      } else if (link) {
-        lastMessageText = '🔗 Link';
-      } else {
-        lastMessageText = encryptedMessage?.text || '';
-      }
-
-      // Update chat's last message
+      const participants = [messageData.sender, recipientId].sort();
       await Chat.findOneAndUpdate(
         { chatId },
-        { 
-          lastMessage: encryptedMessage.text,
-          updatedAt: new Date() 
+        {
+          chatId,
+          participants,
+          lastMessage: messageData.text || (messageData.files?.length > 0 ? 'Media' : ''),
+          updatedAt: new Date(),
         },
         { upsert: true }
       );
 
-      await Message.updateMany(
-        { encrypted: { $exists: false } },
-        { $set: { encrypted: true } }
-      )
-
-      // Prepare the response data
-      const responseData = {
-        ...message.toObject(),
-        _id: message._id,
-        createdAt: message.createdAt,
-        status: message.status
-      };
-
-      // Emit to chat room
+      const responseData = message.toObject();
       io.to(`chat_${chatId}`).emit('new-message', responseData);
-
-      // Notify recipient if they're not in the chat room
-      if (!socket.rooms.has(`chat_${chatId}`)) {
+      if (activeUsers[recipientId]) {
         io.to(`user_${recipientId}`).emit('new-message', responseData);
       }
 
-      // Confirm delivery to sender
-      socket.emit('message-delivered', message._id);
-
+      callback({ status: 'success', messageId: message._id });
     } catch (error) {
       console.error('Error handling message:', error);
-      socket.emit('message-error', {
-        messageId: encryptedMessage?._id,
-        error: 'Failed to send message'
+      callback({ status: 'error', error: error.message });
+      socket.emit('message-error', { messageId: messageData._id, error: error.message });
+    }
+  });
+
+  socket.on('initiate-call', ({ chatId, recipientId, callType }) => {
+    if (activeUsers[recipientId]) {
+      io.to(`user_${recipientId}`).emit('incoming-call', {
+        chatId,
+        callerId: userId,
+        callType, // 'voice' or 'video'
       });
+    } else {
+      socket.emit('call-error', { message: 'Recipient is offline' });
+    }
+  });
+
+  socket.on('accept-call', ({ chatId, callerId }) => {
+    io.to(`user_${callerId}`).emit('call-accepted', { chatId, acceptorId: userId });
+  });
+
+  socket.on('reject-call', ({ chatId, callerId }) => {
+    io.to(`user_${callerId}`).emit('call-rejected', { chatId });
+  });
+
+  socket.on('end-call', ({ chatId, recipientId }) => {
+    io.to(`chat_${chatId}`).emit('call-ended', { chatId });
+  });
+
+  // WebRTC signaling
+  socket.on('offer', ({ chatId, offer, recipientId }) => {
+    if (activeUsers[recipientId]) {
+      io.to(`user_${recipientId}`).emit('offer', { offer });
+    }
+  });
+
+  socket.on('answer', ({ chatId, answer, recipientId }) => {
+    if (activeUsers[recipientId]) {
+      io.to(`user_${recipientId}`).emit('answer', { answer });
+    }
+  });
+
+  socket.on('ice-candidate', ({ chatId, candidate, recipientId }) => {
+    if (activeUsers[recipientId]) {
+      io.to(`user_${recipientId}`).emit('ice-candidate', { candidate });
     }
   });
 
@@ -213,7 +244,8 @@ app.get("/", (req, res) => {
 // API routes
 app.use("/api/users", userRoutes);
 app.use("/api/friends", friendRoutes);
-app.use('/', chatRoutes);
+app.use("/api/block", blockRoutes);
+app.use('/chats', chatRoutes);
 app.use('/messages', messageRoutes)
 
 // 404 handler

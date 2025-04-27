@@ -21,21 +21,27 @@ const messageSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  replyTo: {
+    type: String,
+    default: null
+  },
   encrypted: { type: Boolean, default: false }, 
-  files: [{
-    url: { type: String, required: true }, // Cloudinary URL
-    type: { 
-      type: String, 
-      enum: ['image', 'video', 'file', 'audio'], 
-      required: true 
+  files: [
+    {
+      url: { type: String, required: true },
+      type: {
+        type: String,
+        enum: ['image', 'video', 'audio', 'file', 'gif'],
+        required: true,
+      },
+      name: { type: String, required: true },
+      size: { type: Number, required: true },
+      thumbnail: { type: String },
+      duration: { type: Number }, // Required for audio/video
+      width: { type: Number },
+      height: { type: Number },
     },
-    name: { type: String }, // Original file name
-    size: { type: Number }, // File size in bytes
-    thumbnail: { type: String }, // For videos/images
-    duration: { type: Number }, // For audio/video
-    width: { type: Number }, // For images/videos
-    height: { type: Number } // For images/videos
-  }],
+  ],
   linkPreview: {
     url: { type: String },
     title: { type: String },

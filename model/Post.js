@@ -16,7 +16,7 @@ const postSchema = new mongoose.Schema({
     url: String,
     mediaType: {
       type: String,
-      enum: ['image', 'video', 'gif']
+      enum: ['image', 'video', 'gif', 'webp']
     },
     publicId: String,
     width: Number,
@@ -78,6 +78,11 @@ const postSchema = new mongoose.Schema({
   repostCount: {
     type: Number,
     default: 0
+  },
+  quote: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Post',
+    default: null
   },
   bookmarks: [{
     type: mongoose.Schema.Types.ObjectId,

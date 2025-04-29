@@ -90,6 +90,17 @@ module.exports = (io) => {
       }
     );
 
+    router.post(
+      '/:id/quote',
+      protect,
+      uploadMedia('media', 10),
+      processMediaUpload,
+      async (req, res) => {
+        req.io = io;
+        await postInteractionController.quotePost(req, res);
+      }
+    );
+
     router.delete('/:id/repost', protect, async (req, res) => {
       req.io = io;
       await postInteractionController.unrepostPost(req, res);

@@ -407,7 +407,7 @@ exports.getComments = async (req, res) => {
       const { content, visibility = 'public' } = req.body;
   
       const originalPost = await Post.findById(id)
-        .populate('user', 'name username profilePicture blockedUsers');
+        .populate('user', '-password');
   
       if (!originalPost) {
         return res.status(404).json({
@@ -423,6 +423,21 @@ exports.getComments = async (req, res) => {
           message: 'You are blocked by the original post author'
         });
       }
+
+      // Check if user has already reposted
+      const existingRepost = await Post.findOne({
+        user: userId,
+        repost: id,
+        isDeleted: false
+      });
+
+      if (existingRepost) {
+        return res.status(400).json({
+          success: false,
+          message: 'You have already reposted this post'
+        });
+      }
+  
 
       // Fetch location from IP using geoip-lite
       const userIp = req.user.ipAddress || req.user.devices.find(device => device.isCurrent)?.ipAddress || '::ffff:127.0.0.1';
@@ -445,6 +460,7 @@ exports.getComments = async (req, res) => {
         content,
         visibility,
         repost: originalPost._id,
+        media: req.mediaFiles || [],
         location: {
           type: 'Point',
           coordinates,
@@ -676,3 +692,108 @@ exports.unrepostPost = async (req, res) => {
       });
     }
   };
+
+  // Quote a post
+exports.quotePost = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const { content, visibility = 'public' } = req.body;
+
+    const originalPost = await Post.findById(id)
+      .populate('user', '-password');
+
+    if (!originalPost) {
+      return res.status(404).json({
+        success: false,
+        message: 'Original post not found'
+      });
+    }
+
+    // Check if user is blocked by original post author
+    if (originalPost.user.blockedUsers.includes(userId)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are blocked by the post author'
+      });
+    }
+
+    // Fetch location from IP using geoip-lite
+    const userIp = req.user.ipAddress || req.user.devices.find(device => device.isCurrent)?.ipAddress || '::ffff:127.0.0.1';
+    const ipWithoutPrefix = userIp.replace('::ffff:', '');
+    const geo = geoip.lookup(ipWithoutPrefix);
+    let coordinates = [0, 0];
+    let defaultLocationName = 'Unknown Location';
+
+    if (geo) {
+      coordinates = [parseFloat(geo.ll[1]), parseFloat(geo.ll[0])];
+      defaultLocationName = geo.city || geo.region || 'Current Location';
+    } else {
+      console.warn('GeoIP lookup failed, using default coordinates');
+    }
+
+    // Create quote post
+    const quotePost = await Post.create({
+      user: userId,
+      content,
+      visibility,
+      quote: originalPost._id,
+      media: req.mediaFiles || [], // Support media in quote posts
+      location: {
+        type: 'Point',
+        coordinates,
+        name: defaultLocationName
+      }
+    });
+
+    // Increment repostCount on original post (optional, depending on your requirements)
+    originalPost.repostCount = (originalPost.repostCount || 0) + 1;
+    await originalPost.save();
+
+    // Populate user details for response
+    const populatedPost = await Post.findById(quotePost._id)
+      .populate('user', '-password')
+      .populate('quote');
+
+    // Create notification for original post author
+    if (originalPost.user._id.toString() !== userId) {
+      const notification = await Notification.create({
+        recipient: originalPost.user._id,
+        sender: userId,
+        type: 'quote',
+        content: `${req.user.name} quoted your post`,
+        relatedItem: {
+          post: originalPost._id,
+          user: req.user
+        },
+        priority: 'medium'
+      });
+
+      // Send real-time notification
+      const io = req.io;
+      if (io._activeUsers[originalPost.user._id.toString()]) {
+        io.to(`user_${originalPost.user._id.toString()}`).emit('new-notification', {
+          ...notification.toObject(),
+          sender: {
+            _id: req.user._id,
+            name: req.user.name,
+            username: req.user.username,
+            profilePicture: req.user.profilePicture
+          }
+        });
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      data: populatedPost,
+      message: 'Post quoted successfully'
+    });
+  } catch (error) {
+    console.error('Quote post error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to quote post'
+    });
+  }
+};

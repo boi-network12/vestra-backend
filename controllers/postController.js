@@ -1,6 +1,6 @@
 const Post = require('../model/Post');
 const User = require('../model/userModel');
-const Comment = require('../model/Comment');
+const cloudinary = require('cloudinary').v2;
 const Notification = require('../model/Notification');
 const { handleNSFWViolation } = require('../middleware/uploadMiddleware');
 const mongoose = require('mongoose');

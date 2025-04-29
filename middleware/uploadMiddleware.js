@@ -35,36 +35,79 @@ axiosRetry(axios, {
 const SIGHTENGINE_API_USER = "954881564";
 const SIGHTENGINE_API_SECRET = "iaVuQm7TfkgWKciSQhGsQZXcfqVmCAe2";
 
-// upload
-//  Temporary storage for uploaded files
+const allowedTypes = [
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+  'video/x-msvideo',
+  'video/x-matroska'
+];
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
-      const uploadDir = path.join(__dirname, '../uploads');
+      const uploadDir = path.join(__dirname, '../Uploads');
       console.log('Ensuring upload directory exists:', uploadDir);
       fs.mkdirSync(uploadDir, { recursive: true });
       cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname);
+      const ext = path.extname(file.originalname).toLowerCase();
       const filename = `${Date.now()}${ext}`;
       console.log('Saving file as:', filename);
       cb(null, filename);
-    }
+    },
   }),
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime'];
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      console.warn(`Invalid file type: ${file.originalname}, mime: ${file.mimetype}`);
-      cb(new Error('Invalid file type. Only images (JPEG, PNG, GIF) and videos (MP4, MOV) are allowed.'));
+    // Log file details for debugging
+    console.log('File received:', file);
+
+    // Check if file and mimetype are defined
+    if (!file || !file.mimetype) {
+      console.warn('Invalid file or missing mimetype:', file);
+      return cb(new Error('Invalid file: missing MIME type'));
     }
+
+    // Check total files
+    const totalFiles = req.files ? req.files.length + (req.files.media ? req.files.media.length : 0) : 0;
+    if (totalFiles >= 4) {
+      console.warn('Too many files uploaded');
+      return cb(new Error('Maximum of 4 media files allowed'));
+    }
+
+    // Check video count
+    const videoCount = req.files
+      ? req.files.filter(f => f.mimetype && f.mimetype.startsWith('video/')).length
+      : 0;
+    if (file.mimetype.startsWith('video/') && videoCount >= 2) {
+      console.warn('Too many video files uploaded');
+      return cb(new Error('Maximum of 2 video files allowed'));
+    }
+
+    // Check declared MIME type
+    if (!allowedTypes.includes(file.mimetype)) {
+      console.warn(`Invalid MIME type: ${file.originalname}, mime: ${file.mimetype}`);
+      return cb(
+        new Error(
+          `Invalid file type: ${file.originalname}. Only JPEG, PNG, GIF, WebP, MP4, MOV, WebM, AVI, and MKV are allowed.`
+        )
+      );
+    }
+
+    // Accept the file (content validation will happen later)
+    cb(null, true);
   },
   limits: {
-    fileSize: 50 * 1024 * 1024 // 50MB
-  }
+    fileSize: 50 * 1024 * 1024, // 50MB
+    files: 4 // Enforce max 4 files
+  },
 });
+
+
 
 // Check for NSFW content using Sightengine
 const checkForNSFW = async (filePath) => {
@@ -77,15 +120,14 @@ const checkForNSFW = async (filePath) => {
       throw new Error('File size exceeds 12MB limit for content moderation');
     }
 
-     // Validate file type
-     const fileType = await fileTypeFromFile(filePath);
-     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime'];
-     if (!fileType || !allowedTypes.includes(fileType.mime)) {
-       console.warn(`Invalid or unsupported file format: ${filePath}, detected mime: ${fileType?.mime || 'unknown'}`);
-       throw new Error('Unsupported file format. Only JPEG, PNG, GIF, MP4, and MOV are allowed.');
-     }
- 
-     console.log(`File validated: ${filePath}, mime: ${fileType.mime}, size: ${fileStats.size} bytes`);
+    // Validate file type
+    const fileType = await fileTypeFromFile(filePath);
+    if (!fileType || !allowedTypes.includes(fileType.mime)) {
+      console.warn(`Invalid or unsupported file format: ${filePath}, detected mime: ${fileType?.mime || 'unknown'}`);
+      throw new Error('Unsupported file format. Only JPEG, PNG, GIF, WebP, MP4, MOV, WebM, AVI, and MKV are allowed.');
+    }
+
+    console.log(`File validated: ${filePath}, mime: ${fileType.mime}, size: ${fileStats.size} bytes`);
 
     const formData = new FormData();
     formData.append('media', fs.createReadStream(filePath));
@@ -98,7 +140,6 @@ const checkForNSFW = async (filePath) => {
       timeout: 30000, // 30-second timeout
     });
 
-    // Check for nudity, weapons, alcohol, drugs, offensive content
     const { nudity, weapons, alcohol, drugs, offensive } = response.data;
     
     return {
@@ -114,8 +155,16 @@ const checkForNSFW = async (filePath) => {
 // Upload to Cloudinary with moderation
 const uploadToCloudinary = async (filePath, options = {}) => {
   try {
+    const fileExt = path.extname(filePath).toLowerCase();
+    let resourceType = 'auto';
+    if (['.webp', '.jpg', '.jpeg', '.png', '.gif'].includes(fileExt)) {
+      resourceType = 'image';
+    } else if (['.mp4', '.mov', '.webm', '.avi', '.mkv'].includes(fileExt)) {
+      resourceType = 'video';
+    }
+
     const uploadResult = await promisify(cloudinary.uploader.upload)(filePath, {
-      resource_type: 'auto',
+      resource_type: resourceType,
       moderation: 'manual', 
       ...options
     });
@@ -164,7 +213,7 @@ exports.processMediaUpload = async (req, res, next) => {
 
         let mediaType;
         if (uploadResult.resource_type === 'image') {
-          mediaType = file.mimetype === 'image/gif' ? 'gif' : 'image';
+          mediaType = file.mimetype === 'image/gif' ? 'gif' : file.mimetype === 'image/webp' ? 'webp' : 'image';
         } else if (uploadResult.resource_type === 'video') {
           mediaType = 'video';
         }

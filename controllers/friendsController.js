@@ -1,4 +1,5 @@
 const User = require("../model/userModel");
+const Notification = require("../model/Notification"); 
 const { validationResult } = require('express-validator');
 const { check } = require('express-validator');
 
@@ -89,7 +90,7 @@ const getSuggestedFriends = async (req, res) => {
 // @desc    Follow a user
 // @route   POST /api/follow
 // @access  Private
-const followUser = async (req, res) => {
+const followUser = async (req, res, io) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
@@ -101,7 +102,7 @@ const followUser = async (req, res) => {
   try {
     // Check if users exist
     const [follower, userToFollow] = await Promise.all([
-      User.findById(followerId),
+      User.findById(followerId).select('-password'),
       User.findById(userId)
     ]);
 
@@ -141,6 +142,41 @@ const followUser = async (req, res) => {
     userToFollow.followers.push(followerId);
 
     await Promise.all([follower.save(), userToFollow.save()]);
+
+    // Create notification for the followed user
+    const notification = await Notification.create({
+        recipient: userId,
+        sender: followerId,
+        type: 'friend_request',
+        content: `${follower.name} started following you`,
+        url: `/users-profile`,
+        priority: 'medium',
+      });
+
+      // Emit real-time notification to the followed user
+      const activeUsers = io._activeUsers || {}; 
+      if (activeUsers[userId]) {
+        io.to(`user_${userId}`).emit('new-notification', {
+          ...notification.toObject(),
+          sender: {
+            _id: follower._id,
+            name: follower.name,
+            username: follower.username,
+            profilePicture: follower.profilePicture,
+            bio: follower.bio,
+            link: follower.link,
+            country: follower.country,
+            dateOfBirth: follower.dateOfBirth,
+            following: follower.following,
+            followers: follower.followers,
+            blockedUsers: follower.blockedUsers,
+            verified: follower.verified,
+            ActiveIndicator: follower.ActiveIndicator,
+            // Add any other fields you want to include, ensuring password is excluded
+          },
+        });
+      }
+
 
     res.status(200).json({ 
       success: true,

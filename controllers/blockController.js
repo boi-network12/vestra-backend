@@ -2,6 +2,8 @@
 const User = require("../model/userModel");
 const { validationResult } = require('express-validator');
 const { check } = require('express-validator');
+const NodeCache = require('node-cache');
+const blockCache = new NodeCache({ stdTTL: 60 });
 
 // Validation rules for block operations
 exports.validateBlockOperations = [
@@ -217,6 +219,16 @@ exports.checkBlockStatus = async (req, res) => {
 exports.isBlockedByUser = async (req, res) => {
     const { userId } = req.params;
     const currentUserId = req.user.id;
+    const cacheKey = `blocked-by:${userId}:${currentUserId}`;
+
+    const cached = blockCache.get(cacheKey);
+    if (cached !== undefined) {
+      return res.status(200).json({
+        success: true,
+        isBlockedByUser: cached,
+        cached: true
+      });
+    }
   
     try {
       const targetUser = await User.findById(userId);
@@ -229,7 +241,8 @@ exports.isBlockedByUser = async (req, res) => {
       }
   
       const isBlockedByUser = targetUser.blockedUsers.includes(currentUserId);
-  
+
+      blockCache.set(cacheKey, isBlockedByUser);
       res.status(200).json({
         success: true,
         isBlockedByUser,

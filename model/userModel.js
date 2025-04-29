@@ -115,7 +115,9 @@ const userSchema = mongoose.Schema({
             push: { type: Boolean, default: true },
             friendRequests: { type: Boolean, default: true },
             messages: { type: Boolean, default: true },
-            mentions: { type: Boolean, default: true }
+            mentions: { type: Boolean, default: true },
+            postLikes: { type: Boolean, default: true }, 
+            postComments: { type: Boolean, default: true } 
         },
         privacy: {
             profileVisibility: { 

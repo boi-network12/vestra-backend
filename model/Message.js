@@ -26,6 +26,10 @@ const messageSchema = new mongoose.Schema({
     default: null
   },
   encrypted: { type: Boolean, default: false }, 
+  edited: { 
+    type: Boolean, 
+    default: false 
+  },
   files: [
     {
       url: { type: String, required: true },
@@ -58,7 +62,11 @@ const messageSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
     index: true
-  }
+  },
+  updatedAt: { 
+    type: Date, 
+    default: Date.now 
+  },
 }, {
   timestamps: true
 });

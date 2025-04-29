@@ -6,6 +6,8 @@ const { errorHandler } = require("./middleware/errorMiddleware");
 const userRoutes = require("./routes/userRoutes");
 const friendRoutes = require("./routes/friendsRoutes");
 const chatRoutes = require("./routes/chatRoutes");
+const postRoutes = require("./routes/postRoutes");
+const notificationRoutes = require('./routes/notificationRoutes');
 const helmet = require("helmet");
 const morgan = require("morgan");
 const rateLimit = require('express-rate-limit');
@@ -43,6 +45,8 @@ const io = new Server(httpServer, {
 
 const activeUsers = {};
 const seenMessages = new Set();
+
+io._activeUsers = activeUsers;
 
 io.on('connection', (socket) => {
   const userId = socket.handshake.query.userId;
@@ -100,6 +104,22 @@ io.on('connection', (socket) => {
     socket.to(`chat_${chatId}`).emit('stop-typing', { senderId });
   });
 
+  socket.on('delete-message', async ({ messageId, chatId, senderId }) => {
+    try {
+      const message = await Message.findOne({ _id: messageId, chatId, sender: senderId });
+      if (!message) {
+        socket.emit('message-error', { messageId, error: 'Message not found or unauthorized' });
+        return;
+      }
+  
+      await Message.deleteOne({ _id: messageId });
+      io.to(`chat_${chatId}`).emit('message-deleted', { messageId });
+    } catch (error) {
+      console.error('Error deleting message:', error);
+      socket.emit('message-error', { messageId, error: error.message });
+    }
+  });
+
   socket.on('send-message', async ({ chatId, messageData, recipientId }, callback) => {
     try {
       if (seenMessages.has(messageData._id)) {
@@ -138,6 +158,35 @@ io.on('connection', (socket) => {
       socket.emit('message-error', { messageId: messageData._id, error: error.message });
     }
   });
+
+  socket.on('edit-message', async ({ messageId, chatId, newText, senderId, recipientId }) => {
+    try {
+      const message = await Message.findOne({ _id: messageId, chatId, sender: senderId });
+      if (!message) {
+        socket.emit('message-error', { messageId, error: 'Message not found or unauthorized' });
+        return;
+      }
+      const timeLimit = 15 * 60 * 1000; // 15 minutes
+      const withinTimeLimit = new Date() - new Date(message.createdAt) <= timeLimit;
+      const notRead = message.status !== 'read';
+      if (!withinTimeLimit || !notRead || !message.text) {
+        socket.emit('message-error', { messageId, error: 'Cannot edit this message' });
+        return;
+      }
+      message.text = newText;
+      message.edited = true;
+      message.updatedAt = new Date();
+      await message.save();
+      io.to(`chat_${chatId}`).emit('message-edited', { messageId, newText });
+      if (activeUsers[recipientId]) {
+        io.to(`user_${recipientId}`).emit('message-edited', { messageId, newText });
+      }
+    } catch (error) {
+      console.error('Error editing message:', error);
+      socket.emit('message-error', { messageId, error: error.message });
+    }
+  });
+
 
   socket.on('initiate-call', ({ chatId, recipientId, callType }) => {
     if (activeUsers[recipientId]) {
@@ -189,36 +238,29 @@ io.on('connection', (socket) => {
   });
 })
 
-// // Rate limiting
-// const limiter = rateLimit({
-//   windowMs: 15 * 60 * 1000, // 15 minutes
-//   max: 100, // limit each IP to 100 requests per windowMs
-//   message: 'Too many requests from this IP, please try again later'
-// });
-// app.use(limiter);
 
 // Request logging
-if (process.env.NODE_ENV === "development") {
-  app.use(morgan("dev"));
-} else {
-  app.use(morgan("combined"));
-}
+// if (process.env.NODE_ENV === "development") {
+//   app.use(morgan("dev"));
+// } else {
+//   app.use(morgan("combined"));
+// }
 
 // Enhanced request logging middleware
-app.use((req, res, next) => {
-  console.log(`\n[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  console.log('Headers:', {
-    'content-type': req.headers['content-type'],
-    authorization: req.headers.authorization ? '*****' : 'none',
-    'user-agent': req.headers['user-agent']
-  });
+// app.use((req, res, next) => {
+//   console.log(`\n[${new Date().toISOString()}] ${req.method} ${req.path}`);
+//   console.log('Headers:', {
+//     'content-type': req.headers['content-type'],
+//     authorization: req.headers.authorization ? '*****' : 'none',
+//     'user-agent': req.headers['user-agent']
+//   });
   
-  if (req.body && Object.keys(req.body).length > 0) {
-    console.log('Body:', JSON.stringify(req.body, null, 2));
-  }
+//   if (req.body && Object.keys(req.body).length > 0) {
+//     console.log('Body:', JSON.stringify(req.body, null, 2));
+//   }
   
-  next();
-});
+//   next();
+// });
 
 
 // Body parsers
@@ -242,11 +284,17 @@ app.get("/", (req, res) => {
 });
 
 // API routes
-app.use("/api/users", userRoutes);
-app.use("/api/friends", friendRoutes);
+app.use("/api/users", userRoutes(io));
+app.use("/api/friends", friendRoutes(io));
 app.use("/api/block", blockRoutes);
+app.use('/api/notifications', notificationRoutes);
+
 app.use('/chats', chatRoutes);
-app.use('/messages', messageRoutes)
+app.use('/messages', messageRoutes(io));
+
+app.use('/api/post', postRoutes(io))
+
+
 
 // 404 handler
 app.use((req, res, next) => {

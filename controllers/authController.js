@@ -1,6 +1,7 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../model/userModel");
+const Notification = require("../model/Notification");
 const { validationResult } = require('express-validator');
 const { check } = require('express-validator');
 const crypto = require('crypto');
@@ -290,6 +291,12 @@ const loginUser = async (req, res) => {
 
     await user.save();
 
+    // Fetch recent or unread notifications
+    const notifications = await Notification.find({ recipient: user._id, read: false })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .populate('sender', 'name username profilePicture');
+
     const token = generateToken(user._id);
     user.password = undefined;
 
@@ -297,6 +304,7 @@ const loginUser = async (req, res) => {
       success: true,
       token,
       data: user,
+      notifications,
       message: 'Login successful'
     });
 
@@ -463,6 +471,7 @@ const getCurrentUser = async (req, res) => {
 // @access  Private
 const updateUser = async (req, res) => {
   const { name, username, email, phoneNumber, bio, link, password, profilePicture, country, dateOfBirth, settings } = req.body;
+  const io = req.io;
 
   try {
     // Check if username or email is being updated to an existing one
@@ -498,7 +507,7 @@ const updateUser = async (req, res) => {
       
       if (settings.notifications) {
         updateFields.settings.notifications = {};
-        const notificationFields = ['email', 'push', 'friendRequests', 'messages', 'mentions'];
+        const notificationFields = ['email', 'push', 'friendRequests', 'messages', 'mentions', 'postLikes', 'postComments'];
         notificationFields.forEach(field => {
           if (settings.notifications[field] !== undefined) {
             updateFields.settings.notifications[field] = settings.notifications[field];
@@ -529,6 +538,37 @@ const updateUser = async (req, res) => {
       updateFields,
       { new: true, runValidators: true }
     ).select('-password -verificationCode -verificationExpires');
+
+    //  create notification
+    if (profilePicture || bio) {
+      const followers = updatedUser.followers;
+      const notificationContent = profilePicture
+        ? `${updatedUser.name} updated their profile picture`
+        : `${updatedUser.name} updated their bio`;
+      
+      const notifications = followers.map(followerId => ({
+        recipient: followerId,
+        sender: updatedUser._id,
+        type: 'system',
+        content: notificationContent,
+        priority: 'low',
+      }));
+
+      await Notification.insertMany(notifications);
+
+      followers.forEach(followerId => {
+        if (io._activeUsers[followerId]) {
+          io.to(`user_${followerId}`).emit('new-notification', {
+            recipient: followerId,
+            sender: updatedUser._id,
+            type: 'system',
+            content: notificationContent,
+            createdAt: new Date(),
+            read: false,
+          });
+        }
+      });
+    }
 
     res.status(200).json({
       success: true,

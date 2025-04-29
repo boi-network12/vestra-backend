@@ -10,6 +10,8 @@ const { writeFile, unlink } = require('fs').promises;
 const axios = require('axios');
 const { generateLinkPreview } = require('../utils/linkPreview');
 const User = require('../model/userModel');
+const Message = require('../model/Message');
+const { aiMessage } = require('../controllers/aiMessageController');
 
 // Configure Cloudinary
 cloudinary.config({
@@ -18,8 +20,6 @@ cloudinary.config({
   api_secret: '5jePEULYNugFnPMdyfj1XPiytCI',
 });
 
-  const GEMINI_API_KEY = '';
-  const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 
 // Configure Multer with Cloudinary
 const storage = new CloudinaryStorage({
@@ -74,6 +74,38 @@ const generateVideoThumbnail = async (filePath, outputPath) => {
       });
   });
 };
+
+router.put('/:messageId', protect, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { newText } = req.body;
+    const userId = req.user.id;
+
+    const message = await Message.findOne({ _id: messageId, sender: userId });
+    if (!message) {
+      return res.status(404).json({ error: 'Message not found or unauthorized' });
+    }
+
+    // Check edit conditions
+    const timeLimit = 15 * 60 * 1000; // 15 minutes
+    const withinTimeLimit = new Date() - new Date(message.createdAt) <= timeLimit;
+    const notRead = message.status !== 'read';
+    if (!withinTimeLimit || !notRead || !message.text) {
+      return res.status(400).json({ error: 'Cannot edit this message' });
+    }
+
+    message.text = newText;
+    message.edited = true;
+    message.updatedAt = new Date();
+    await message.save();
+
+    res.json({ message: 'Message updated successfully' });
+  } catch (error) {
+    console.error('Error editing message:', error);
+    res.status(500).json({ error: 'Failed to edit message' });
+  }
+});
+
 
 // Upload multiple files to Cloudinary with enhanced processing
 router.post('/upload', protect, upload.array('files', 10), async (req, res) => {
@@ -200,103 +232,33 @@ router.post('/link-preview', protect, async (req, res) => {
   }
 });
 
-router.post('/ai-message', protect, async (req, res) => {
-  try {
-    const { message, userName } = req.body;
-
-    const user = await User.findById(req.user.id).select(
-      'name username email bio interests country settings lastActive'
-    );
-
-    if (!user) {
-      const user = await User.findById(req.user.id).select(
-        'name username email bio interests country settings lastActive'
-      );
-    }
-
-    // Define the system prompt with user context
-    const systemPrompt = `
-      You are Vestra AI, a friendly and helpful assistant created for the Vestra app. 
-      You are talking to ${user.name} (username: ${user.username}). 
-      User details:
-      - Bio: ${user.bio || 'Not provided'}
-      - Interests: ${user.interests.join(', ') || 'None'}
-      - Country: ${user.country || 'Not provided'}
-      - Notification Settings: ${JSON.stringify(user.settings.notifications)}
-      - Privacy Settings: ${JSON.stringify(user.settings.privacy)}
-      - Last Active: ${user.lastActive.toISOString()}
-      Always respond as Vestra AI, avoid mentioning any other identity, and tailor responses based on the user's data when relevant.
-    
-      If the user asks to update their profile, such as:
-      - "update my bio to [new bio]"
-      - "update my name to [new name]"
-      - "update my interests to [interest1, interest2]"
-      - "update my username to [new username]"
-      Confirm the action and indicate that the update will be processed. For example:
-      - User: "update my bio to I love coding"
-      - Response: "Got it! I've updated your bio to 'I love coding'. Anything else you'd like to change?"
-      Ensure the request is clear and valid. If the request is ambiguous (e.g., "update my profile"), ask for clarification, like: "Could you specify what you'd like to update? For example, your bio, name, or interests."
-      Do not process updates for sensitive fields like email or password without additional verification steps.
-    `;
-
-    //  check if the message is an update request
-    const updateBioRegex = /update my bio\s+(.+)/i;
-    const match = message.match(updateBioRegex);
-
-    if (match) {
-      const newBio = match[1].trim();
-
-      // Validate the new bio
-      if (newBio.length > 160) { 
-        return res.json({ text: "Sorry, the bio is too long. Please keep it under 160 characters." });
-      }
-
-      // Update the user's bio using the updateUser logic
-      try {
-        const updatedUser = await User.findByIdAndUpdate(
-          req.user.id,
-          { bio: newBio },
-          { new: true, runValidators: true }
-        ).select('-password -verificationCode -verificationExpires');
-
-        if (!updatedUser) {
-          return res.status(500).json({ error: 'Failed to update bio' });
-        }
-
-        // Respond with confirmation
-        return res.json({ text: `Got it! I've updated your bio to "${newBio}". Anything else you'd like to change?` });
-      } catch (err) {
-        console.error('Bio update error:', err);
-        return res.json({ text: 'Sorry, I encountered an error while updating your bio. Please try again later.' });
-      }
-    }
-
-
-    // Combine system prompt with user message
-    const prompt = `${systemPrompt}\n\nUser: ${message}`;
-
-    const response = await axios.post(
-      `${GEMINI_API_URL}?key=${process.env.GEMINI_API_KEY}`,
-      {
-        contents: [
-          {
-            parts: [
-              {
-                text: prompt,
-              },
-            ],
-          },
-        ],
-      },
-      { headers: { 'Content-Type': 'application/json' } }
-    );
-
-    const aiResponse = response.data.candidates[0]?.content?.parts[0]?.text || 'No response';
-    res.json({ text: aiResponse });
-  } catch (error) {
-    console.error('AI message error:', error);
-    res.status(500).json({ error: 'Failed to get AI response' });
-  }
-});
 
 module.exports = router;
+
+module.exports = (io) => {
+  // ... existing routes
+  router.post('/ai-message', protect, aiMessage)
+
+  router.delete('/:messageId', protect, async (req, res) => {
+    try {
+      const { messageId } = req.params;
+      const userId = req.user.id;
+      console.log('Deleting message:', { messageId, userId });
+      const message = await Message.findOneAndDelete({ _id: messageId, sender: userId });
+      if (!message) {
+        console.log('Message not found or unauthorized:', { messageId, userId });
+        return res.status(404).json({ error: 'Message not found or unauthorized' });
+      }
+      // Use the passed io instance
+      io.to(`chat_${message.chatId}`).emit('message-deleted', { messageId });
+      res.json({ message: 'Message deleted successfully' });
+    } catch (error) {
+      console.error('Error deleting message:', error);
+      res.status(500).json({ error: 'Failed to delete message' });
+    }
+  });
+
+  // ... other routes
+
+  return router;
+};

@@ -266,62 +266,59 @@ exports.getPosts = async (req, res) => {
     const userId = req.user.id;
     const { page = 1, limit = 10, filter = 'all', search, userId: targetUserId } = req.query;
 
-
-    // Get user's preferences and relationships
     const user = await User.findById(userId).select('following blockedUsers blockingUsers settings.privacy.profileVisibility');
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: 'User not found'
+        message: 'User not found',
       });
     }
-    
-    // Ensure blockedUsers and blockingUsers are arrays
-    const blockedUsers = Array.isArray(user.blockedUsers) ? user.blockedUsers : [];
-    const blockingUsers = Array.isArray(user.blockingUsers) ? user.blockingUsers : [];
 
+    const blockedUsers = Array.isArray(user.blockedUsers) ? user.blockedUsers.map(String) : [];
+    const blockingUsers = Array.isArray(user.blockingUsers) ? user.blockingUsers.map(String) : [];
 
-    // Base query conditions
     const conditions = {
       isDeleted: false,
-      isNSFW: false
+      isNSFW: false,
     };
 
     if (targetUserId && mongoose.Types.ObjectId.isValid(targetUserId)) {
-      conditions.user = targetUserId;
+      const targetUser = await User.findById(targetUserId).select('blockedUsers following');
+      if (!targetUser) {
+        return res.status(404).json({
+          success: false,
+          message: 'Target user not found',
+        });
+      }
 
-      // Ensure the target user hasn't blocked the current user
-      const targetUser = await User.findById(targetUserId).select('blockedUsers');
-      if (targetUser && targetUser.blockedUsers.includes(userId)) {
+      if (targetUser.blockedUsers.map(String).includes(userId)) {
         return res.status(403).json({
           success: false,
-          message: 'You are blocked by this user'
+          message: 'You are blocked by this user',
         });
       }
 
       if (filter === 'user_all' && targetUserId === userId) {
-
+        conditions.user = targetUserId;
       } else if (filter === 'user_visible') {
+        conditions.user = targetUserId;
         conditions.$or = [
           { visibility: 'public' },
           {
             visibility: 'friends',
-            user: { $in: user.following }
-          }
+            user: { $in: user.following.map(String) },
+          },
         ];
       } else {
-        conditions.$or = [
-          { visibility: 'public' },
-          {
-            visibility: 'friends',
-            user: { $in: user.following }
-          }
-        ];
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid filter for target user',
+        });
       }
     } else if (filter === 'following') {
       conditions.$or = [
-        { user: { $in: user.following } },
-        { user: userId }
+        { user: { $in: user.following.map(String) } },
+        { user: userId },
       ];
       conditions.visibility = { $in: ['public', 'friends'] };
     } else if (filter === 'bookmarked') {
@@ -331,35 +328,29 @@ exports.getPosts = async (req, res) => {
         { visibility: 'public' },
         {
           visibility: 'friends',
-          user: { $in: user.following }
+          user: { $in: user.following.map(String) },
         },
-        { user: userId }
+        { user: userId },
       ];
     }
 
-     // Exclude posts from blocked users and users who blocked the current user
     conditions.user = {
-      $nin: [...blockedUsers, ...blockingUsers]
+      $nin: [...blockedUsers, ...blockingUsers],
     };
 
-
-    // Search functionality
     if (search) {
       conditions.$or = [
         { content: { $regex: search, $options: 'i' } },
         { 'user.username': { $regex: search, $options: 'i' } },
-        { 'user.name': { $regex: search, $options: 'i' } }
+        { 'user.name': { $regex: search, $options: 'i' } },
       ];
     }
 
-    // Advanced sorting algorithm
     const sort = {
       createdAt: -1,
-      likeCount: -1,
-      commentCount: -1
+      _id: -1,
     };
 
-    // Get posts with pagination
     const options = {
       page: parseInt(page),
       limit: parseInt(limit),
@@ -370,29 +361,37 @@ exports.getPosts = async (req, res) => {
         { path: 'likes', select: '-password' },
         {
           path: 'repost',
-          populate: { path: 'user', select: '-password' }
+          populate: { path: 'user', select: '-password' },
         },
         {
           path: 'quote',
           populate: [
             { path: 'user', select: '-password' },
-            { path: 'media' }
-          ]
-        }
+            { path: 'media' },
+          ],
+        },
       ],
-      lean: true
+      lean: true,
     };
 
+    console.log('getPosts conditions:', JSON.stringify(conditions, null, 2)); // Debug log
 
     const posts = await Post.paginate(conditions, options);
 
-    // Add isLiked field to each post
     const postsWithIsLiked = posts.docs.map((post) => ({
       ...post,
-      isLiked: Array.isArray(post.likes) ? post.likes.map(id => id.toString()).includes(userId.toString()) : false,
-      isBookmarked: Array.isArray(post.bookmarks) ? post.bookmarks.map(id => id.toString()).includes(userId.toString()) : false,
+      isLiked: Array.isArray(post.likes)
+        ? post.likes.map((id) => id.toString()).includes(userId.toString())
+        : false,
+      isBookmarked: Array.isArray(post.bookmarks)
+        ? post.bookmarks.map((id) => id.toString()).includes(userId.toString())
+        : false,
     }));
 
+    console.log(
+      'Fetched posts:',
+      postsWithIsLiked.map((post) => ({ _id: post._id, user: post.user._id }))
+    ); // Debug log
 
     res.status(200).json({
       success: true,
@@ -402,15 +401,14 @@ exports.getPosts = async (req, res) => {
         page: posts.page,
         totalPages: posts.totalPages,
         hasNextPage: posts.hasNextPage,
-        hasPrevPage: posts.hasPrevPage
-      }
+        hasPrevPage: posts.hasPrevPage,
+      },
     });
-
   } catch (error) {
     console.error('Get posts error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch posts'
+      message: 'Failed to fetch posts',
     });
   }
 };

@@ -100,8 +100,8 @@ exports.createPost = async (req, res) => {
 
     // Populate user details for response
     const populatedPost = await Post.findById(post._id)
-        .populate('user', 'name username profilePicture email phoneNumber bio link country dateOfBirth role following followers blockedUsers ActiveIndicator disabled interests lastActive verified devices lastLogin ipAddress settings')
-        .populate('taggedUsers', 'name username profilePicture email phoneNumber bio link country dateOfBirth role following followers blockedUsers ActiveIndicator disabled interests lastActive verified devices lastLogin ipAddress settings')
+        .populate('user', '-password')
+        .populate('taggedUsers', '-password')
         .lean()
 
     // Create notifications for tagged users
@@ -112,10 +112,24 @@ exports.createPost = async (req, res) => {
       type: 'tag',
       url: `post-view/${post._id}`,
       content: `${req.user.name} tagged you in a post`,
-      relatedItem: {
-        post: populatedPost,
-        user: req.user 
-      },
+        relatedItem: {
+          post: populatedPost,
+          user: {
+            _id: req.user._id,
+            name: req.user.name,
+            username: req.user.username,
+            profilePicture: req.user.profilePicture,
+            bio: req.user.bio,
+            link: req.user.link,
+            country: req.user.country,
+            dateOfBirth: req.user.dateOfBirth,
+            following: req.user.following,
+            followers: req.user.followers,
+            blockedUsers: req.user.blockedUsers,
+            verified: req.user.verified,
+            ActiveIndicator: req.user.ActiveIndicator
+          },
+        },
       priority: 'high'
     }));
 
@@ -132,7 +146,21 @@ exports.createPost = async (req, res) => {
             content: `${req.user.name} tagged you in a post`,
             relatedItem: {
               post: populatedPost,
-              user: req.user // Include full sender user data
+              user: {
+                _id: req.user._id,
+                name: req.user.name,
+                username: req.user.username,
+                profilePicture: req.user.profilePicture,
+                bio: req.user.bio,
+                link: req.user.link,
+                country: req.user.country,
+                dateOfBirth: req.user.dateOfBirth,
+                following: req.user.following,
+                followers: req.user.followers,
+                blockedUsers: req.user.blockedUsers,
+                verified: req.user.verified,
+                ActiveIndicator: req.user.ActiveIndicator
+              },
             },
             createdAt: new Date(),
             read: false
@@ -236,7 +264,7 @@ exports.getFriends = async (req, res) => {
 exports.getPosts = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { page = 1, limit = 10, filter = 'all', search } = req.query;
+    const { page = 1, limit = 10, filter = 'all', search, userId: targetUserId } = req.query;
 
 
     // Get user's preferences and relationships
@@ -259,24 +287,53 @@ exports.getPosts = async (req, res) => {
       isNSFW: false
     };
 
-    // Apply visibility filters based on user's preference
-    if (filter === 'following') {
+    if (targetUserId && mongoose.Types.ObjectId.isValid(targetUserId)) {
+      conditions.user = targetUserId;
+
+      // Ensure the target user hasn't blocked the current user
+      const targetUser = await User.findById(targetUserId).select('blockedUsers');
+      if (targetUser && targetUser.blockedUsers.includes(userId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'You are blocked by this user'
+        });
+      }
+
+      if (filter === 'user_all' && targetUserId === userId) {
+
+      } else if (filter === 'user_visible') {
+        conditions.$or = [
+          { visibility: 'public' },
+          {
+            visibility: 'friends',
+            user: { $in: user.following }
+          }
+        ];
+      } else {
+        conditions.$or = [
+          { visibility: 'public' },
+          {
+            visibility: 'friends',
+            user: { $in: user.following }
+          }
+        ];
+      }
+    } else if (filter === 'following') {
       conditions.$or = [
         { user: { $in: user.following } },
         { user: userId }
       ];
       conditions.visibility = { $in: ['public', 'friends'] };
-    } else if (filter === 'bookmarked' ) {
+    } else if (filter === 'bookmarked') {
       conditions.bookmarks = userId;
     } else {
-      // For 'all' filter, show public posts or posts from friends if visibility is friends
       conditions.$or = [
         { visibility: 'public' },
         {
           visibility: 'friends',
           user: { $in: user.following }
         },
-        { user: userId } // Always show user's own posts
+        { user: userId }
       ];
     }
 
@@ -310,7 +367,18 @@ exports.getPosts = async (req, res) => {
       populate: [
         { path: 'user', select: '-password' },
         { path: 'taggedUsers', select: '-password' },
-        { path: 'repost', populate: { path: 'user', select: '-password' } } // Add this to populate repost.user
+        { path: 'likes', select: '-password' },
+        {
+          path: 'repost',
+          populate: { path: 'user', select: '-password' }
+        },
+        {
+          path: 'quote',
+          populate: [
+            { path: 'user', select: '-password' },
+            { path: 'media' }
+          ]
+        }
       ],
       lean: true
     };
@@ -321,8 +389,8 @@ exports.getPosts = async (req, res) => {
     // Add isLiked field to each post
     const postsWithIsLiked = posts.docs.map((post) => ({
       ...post,
-      isLiked: post.likes.map(id => id.toString()).includes(userId.toString()),
-      isBookmarked: post.bookmarks.map(id => id.toString()).includes(userId.toString()),
+      isLiked: Array.isArray(post.likes) ? post.likes.map(id => id.toString()).includes(userId.toString()) : false,
+      isBookmarked: Array.isArray(post.bookmarks) ? post.bookmarks.map(id => id.toString()).includes(userId.toString()) : false,
     }));
 
 
@@ -362,15 +430,22 @@ exports.getPost = async (req, res) => {
 
     // Check if user is blocked by post author
     const post = await Post.findById(id)
-      .populate('user', '-password')
-      .populate('taggedUsers', '-password')
-      .populate({
+  .populate('user', '-password')
+  .populate('taggedUsers', '-password')
+  .populate({
         path: 'repost',
         populate: [
           { path: 'user', select: '-password' },
-          { path: 'media' } // Ensure media is populated
+          { path: 'media' }
         ]
       })
+      .populate({
+        path: 'quote',
+        populate: [
+          { path: 'user', select: '-password' },
+          { path: 'media' }
+        ]
+      });
 
       if (!post || post.isDeleted || post.isNSFW) {
         return res.status(404).json({

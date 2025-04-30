@@ -49,6 +49,25 @@ exports.likePost = async (req, res) => {
         type: 'like',
         content: `${req.user.name} liked your post`,
         relatedItem: post._id,
+        url: `/post-view/${post._id}`,
+        relatedItem: {
+          post: post.toObject(),
+          user: {
+            _id: req.user._id,
+            name: req.user.name,
+            username: req.user.username,
+            profilePicture: req.user. profilePicture,
+            bio: req.user.bio,
+            link: req.user.link,
+            country: req.user.country,
+            dateOfBirth: req.user.dateOfBirth,
+            following: req.user.following,
+            followers: req.user.followers,
+            blockedUsers: req.user.blockedUsers,
+            verified: req.user.verified,
+            ActiveIndicator: req.user.ActiveIndicator
+          },
+        },
         priority: 'medium',
       });
 
@@ -62,6 +81,15 @@ exports.likePost = async (req, res) => {
             name: req.user.name,
             username: req.user.username,
             profilePicture: req.user.profilePicture,
+            bio: req.user.bio,
+            link: req.user.link,
+            country: req.user.country,
+            dateOfBirth: req.user.dateOfBirth,
+            following: req.user.following,
+            followers: req.user.followers,
+            blockedUsers: req.user.blockedUsers,
+            verified: req.user.verified,
+            ActiveIndicator: req.user.ActiveIndicator
           },
         });
       }
@@ -190,7 +218,25 @@ exports.createComment = async (req, res) => {
         sender: userId,
         type: 'comment',
         content: `${req.user.name} commented on your post`,
-        relatedItem: post._id,
+        url: `/post-view/${post._id}`,
+        relatedItem: {
+          post: post.toObject(),
+          user: {
+            _id: req.user._id,
+            name: req.user.name,
+            username: req.user.username,
+            profilePicture: req.user.profilePicture,
+            bio: req.user.bio,
+            link: req.user.link,
+            country: req.user.country,
+            dateOfBirth: req.user.dateOfBirth,
+            following: req.user.following,
+            followers: req.user.followers,
+            blockedUsers: req.user.blockedUsers,
+            verified: req.user.verified,
+            ActiveIndicator: req.user.ActiveIndicator
+          },
+        },
         priority: 'medium'
       });
 
@@ -203,8 +249,17 @@ exports.createComment = async (req, res) => {
             _id: req.user._id,
             name: req.user.name,
             username: req.user.username,
-            profilePicture: req.user.profilePicture
-          }
+            profilePicture: req.user.profilePicture,
+            bio: req.user.bio,
+            link: req.user.link,
+            country: req.user.country,
+            dateOfBirth: req.user.dateOfBirth,
+            following: req.user.following,
+            followers: req.user.followers,
+            blockedUsers: req.user.blockedUsers,
+            verified: req.user.verified,
+            ActiveIndicator: req.user.ActiveIndicator
+          },
         });
       }
     }
@@ -232,7 +287,7 @@ exports.sharePost = async (req, res) => {
     const { content, visibility = 'public' } = req.body;
 
     const originalPost = await Post.findById(id)
-      .populate('user', 'name username profilePicture blockedUsers');
+      .populate('user', '-password');
 
     if (!originalPost) {
       return res.status(404).json({
@@ -376,10 +431,10 @@ exports.getComments = async (req, res) => {
         limit: parseInt(limit),
         sort: { createdAt: -1 },
         populate: [
-          { path: 'user', select: 'name username profilePicture' },
+          { path: 'user', select: '-password' },
           {
             path: 'replies',
-            populate: { path: 'user', select: 'name username profilePicture' },
+            populate: { path: 'user', select: '-password' },
           },
         ],
         lean: true,
@@ -484,10 +539,25 @@ exports.getComments = async (req, res) => {
           sender: userId,
           type: 'repost',
           content: `${req.user.name} reposted your post`,
-          relatedItem: {
-            post: originalPost._id,
-            user: req.user
+          url: `/post-view/${originalPost._id}`,
+        relatedItem: {
+          post: originalPost.toObject(),
+          user: {
+            _id: req.user._id,
+            name: req.user.name,
+            username: req.user.username,
+            profilePicture: req.user.profilePicture,
+            bio: req.user.bio,
+            link: req.user.link,
+            country: req.user.country,
+            dateOfBirth: req.user.dateOfBirth,
+            following: req.user.following,
+            followers: req.user.followers,
+            blockedUsers: req.user.blockedUsers,
+            verified: req.user.verified,
+            ActiveIndicator: req.user.ActiveIndicator
           },
+        },
           priority: 'medium'
         });
   
@@ -500,8 +570,17 @@ exports.getComments = async (req, res) => {
               _id: req.user._id,
               name: req.user.name,
               username: req.user.username,
-              profilePicture: req.user.profilePicture
-            }
+              profilePicture: req.user.profilePicture,
+              bio: req.user.bio,
+              link: req.user.link,
+              country: req.user.country,
+              dateOfBirth: req.user.dateOfBirth,
+              following: req.user.following,
+              followers: req.user.followers,
+              blockedUsers: req.user.blockedUsers,
+              verified: req.user.verified,
+              ActiveIndicator: req.user.ActiveIndicator
+            },
           });
         }
       }
@@ -738,7 +817,7 @@ exports.quotePost = async (req, res) => {
       content,
       visibility,
       quote: originalPost._id,
-      media: req.mediaFiles || [], // Support media in quote posts
+      media: req.mediaFiles || [], 
       location: {
         type: 'Point',
         coordinates,
@@ -753,7 +832,10 @@ exports.quotePost = async (req, res) => {
     // Populate user details for response
     const populatedPost = await Post.findById(quotePost._id)
       .populate('user', '-password')
-      .populate('quote');
+      .populate({
+        path: 'quote',
+        populate: { path: 'user', select: '-password' }
+      });
 
     // Create notification for original post author
     if (originalPost.user._id.toString() !== userId) {
@@ -762,9 +844,24 @@ exports.quotePost = async (req, res) => {
         sender: userId,
         type: 'quote',
         content: `${req.user.name} quoted your post`,
+        url: `/post-view/${originalPost._id}`,
         relatedItem: {
-          post: originalPost._id,
-          user: req.user
+          post: originalPost.toObject(),
+          user: {
+            _id: req.user._id,
+            name: req.user.name,
+            username: req.user.username,
+            profilePicture: req.user.profilePicture,
+            bio: req.user.bio,
+            link: req.user.link,
+            country: req.user.country,
+            dateOfBirth: req.user.dateOfBirth,
+            following: req.user.following,
+            followers: req.user.followers,
+            blockedUsers: req.user.blockedUsers,
+            verified: req.user.verified,
+            ActiveIndicator: req.user.ActiveIndicator
+          },
         },
         priority: 'medium'
       });
@@ -778,8 +875,17 @@ exports.quotePost = async (req, res) => {
             _id: req.user._id,
             name: req.user.name,
             username: req.user.username,
-            profilePicture: req.user.profilePicture
-          }
+            profilePicture: req.user.profilePicture,
+            bio: req.user.bio,
+            link: req.user.link,
+            country: req.user.country,
+            dateOfBirth: req.user.dateOfBirth,
+            following: req.user.following,
+            followers: req.user.followers,
+            blockedUsers: req.user.blockedUsers,
+            verified: req.user.verified,
+            ActiveIndicator: req.user.ActiveIndicator
+          },
         });
       }
     }

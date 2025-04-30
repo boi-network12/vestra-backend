@@ -27,7 +27,8 @@ const notificationSchema = new mongoose.Schema({
       'comment', 
       'repost', 
       'share',
-      'like'
+      'like',
+      'quote'
     ],
     required: true
   },

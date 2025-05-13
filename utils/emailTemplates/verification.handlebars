@@ -1,24 +1,58 @@
-<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f5f9ff; padding: 30px; border-radius: 10px; border: 1px solid #e0e6ff;">
-    <div style="background-color: #4285f4; padding: 20px; border-radius: 8px 8px 0 0; text-align: center;">
-        <h1 style="color: white; margin: 0;">Email Verification</h1>
-    </div>
-    
-    <div style="padding: 30px; background-color: white; border-radius: 0 0 8px 8px;">
-        <p style="font-size: 16px; color: #333;">Hi {{name}},</p>
-        <p style="font-size: 16px; color: #333;">Thank you for registering with SocialApp. Please use the following verification code to verify your email address:</p>
-        
-        <div style="text-align: center; margin: 30px 0;">
-            <div style="display: inline-block; background-color: #f0f7ff; padding: 15px 30px; border-radius: 5px; border: 1px dashed #4285f4;">
-                <span style="font-size: 24px; font-weight: bold; color: #4285f4; letter-spacing: 2px;">{{code}}</span>
-            </div>
-        </div>
-        
-        <p style="font-size: 16px; color: #333;">This code will expire in 10 minutes. If you didn't request this, please ignore this email.</p>
-        
-        <p style="font-size: 16px; color: #333; margin-top: 30px;">Best regards,<br>The SocialApp Team</p>
-    </div>
-    
-    <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #999;">
-        <p>© {{year}} SocialApp. All rights reserved.</p>
-    </div>
-</div>
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Verification - Vetsra</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f9;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 600px; margin: 40px auto;">
+    <tr>
+      <td style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <!-- Header -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+          <tr>
+            <td style="background-color: #1a73e8; padding: 20px; text-align: center;">
+              <h1 style="color: #ffffff; font-size: 24px; margin: 0;">Verify Your Email</h1>
+            </td>
+          </tr>
+        </table>
+        <!-- Body -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+          <tr>
+            <td style="padding: 40px 30px;">
+              <p style="font-size: 16px; color: #202124; margin: 0 0 20px;">Hello {{name}},</p>
+              <p style="font-size: 16px; color: #202124; margin: 0 0 20px;">
+                Thank you for joining Vestra. To complete your registration, please use the verification code below:
+              </p>
+              <div style="text-align: center; margin: 30px 0;">
+                <span style="display: inline-block; background-color: #e8f0fe; color: #1a73e8; font-size: 24px; font-weight: bold; padding: 15px 30px; border-radius: 6px; letter-spacing: 2px;">
+                  {{code}}
+                </span>
+              </div>
+              <p style="font-size: 14px; color: #5f6368; margin: 0 0 20px;">
+                This code expires in 10 minutes. If you didn’t request this, please contact our support team.
+              </p>
+              <p style="font-size: 16px; color: #202124; margin: 0;">
+                Best regards,<br>The Vestra Team
+              </p>
+            </td>
+          </tr>
+        </table>
+        <!-- Footer -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+          <tr>
+            <td style="background-color: #f4f4f9; padding: 20px; text-align: center; font-size: 12px; color: #5f6368;">
+              <p style="margin: 0;">&copy; {{year}} Vestra. All rights reserved.</p>
+              <p style="margin: 5px 0 0;">
+                <a href="https://vestra.com/support" style="color: #1a73e8; text-decoration: none;">Support</a> | 
+                <a href="https://vestra.com/privacy" style="color: #1a73e8; text-decoration: none;">Privacy Policy</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -1,74 +1,101 @@
 const jwt = require('jsonwebtoken');
-const User = require('../model/userModel');
+const User = require('../models/User');
+const { RateLimiterMemory } = require('rate-limiter-flexible');
 
-// Protect routes with JWT
+// Rate limiter for auth attempts
+const authLimiter = new RateLimiterMemory({
+  points: 10, // 10 attempts
+  duration: 3600, // per hour per IP
+});
+
 exports.protect = async (req, res, next) => {
   try {
-    // 1) Get token from header
+    // Rate limit check
+    await authLimiter.consume(req.ip);
+
+    // Get token from header or cookies
     let token;
     if (
       req.headers.authorization &&
       req.headers.authorization.startsWith('Bearer')
     ) {
       token = req.headers.authorization.split(' ')[1];
+    } else if (req.cookies?.accessToken) {
+      token = req.cookies.accessToken;
     }
 
     if (!token) {
       return res.status(401).json({
         success: false,
-        message: 'Not authorized to access this route'
+        message: 'No authentication token provided',
       });
     }
 
-    // 2) Verify token
+    // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // 3) Check if user still exists
-    const currentUser = await User.findById(decoded.id);
+    // Check if user exists
+    const currentUser = await User.findById(decoded.id).select('+sessions');
     if (!currentUser) {
       return res.status(401).json({
         success: false,
-        message: 'The user belonging to this token no longer exists'
+        message: 'User associated with this token no longer exists',
       });
     }
 
-    // 4) Check if user changed password after token was issued
+    // Check if session is valid
+    const session = currentUser.sessions.find(
+      (s) => s.token === token && s.active
+    );
+    if (!session) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired session. Please log in again',
+      });
+    }
+
+    // Check password change
     if (currentUser.changedPasswordAfter(decoded.iat)) {
       return res.status(401).json({
         success: false,
-        message: 'User recently changed password. Please log in again'
+        message: 'Password changed recently. Please log in again',
       });
     }
 
-    // 5) Check if the token matches any active device
-    const activeDevice = currentUser.devices.find(
-      (device) => device.isCurrent && device.ipAddress === req.ip
-    );
-    
-    if (!activeDevice) {
-      return res.status(401).json({
-        success: false,
-        message: 'Session expired or invalid. Please log in again',
-      });
-    }
-    
-
-    // GRANT ACCESS TO PROTECTED ROUTE
+    // Attach user to request
     req.user = currentUser;
     next();
   } catch (err) {
     console.error('Authentication Error:', err.message);
-    
+
     let message = 'Not authorized to access this route';
+    let status = 401;
+
     if (err.name === 'TokenExpiredError') {
-      message = 'Your token has expired. Please log in again';
+      message = 'Token expired. Please log in again';
     } else if (err.name === 'JsonWebTokenError') {
       message = 'Invalid token. Please log in again';
+    } else if (err.message.includes('Rate limit')) {
+      message = 'Too many authentication attempts. Try again later';
+      status = 429;
     }
 
-    res.status(401).json({
+    res.status(status).json({
       success: false,
-      message
+      message,
     });
   }
+};
+
+// Role-based authorization
+exports.restrictTo = (...roles) => {
+  return (req, res, next) => {
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to perform this action',
+      });
+    }
+    next();
+  };
 };

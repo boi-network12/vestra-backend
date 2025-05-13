@@ -1,45 +1,18 @@
-const express = require("express");
+const express = require('express');
+const router = express.Router();
 const {
-  registerUser,
-  loginUser,
-  updateUser,
-  deleteUser,
-  getCurrentUser,
-  validateRegister,
-  validateLogin,
-  logoutUser,
-  logoutAllDevices
-} = require("../controllers/authController");
-const { protect } = require("../middleware/authMiddleware");
+  getUserDetails,
+  updateUserDetails,
+  updateProfilePicture,
+  getUserHistory,
+} = require('../controllers/userController');
+const { protect } = require('../middleware/authMiddleware');
 
-module.exports = (io) => {
-   const router = express.Router();
+router.use(protect); // Protect all routes below
 
-   router.use((req, res, next) => {
-      req.io = io;
-      next();
-    });
+router.get('/me', getUserDetails);
+router.put('/me', updateUserDetails);
+router.put('/me/avatar', updateProfilePicture);
+router.get('/history/:userId', getUserHistory); // Admin only
 
-   // Public routes
-    router.post("/register", validateRegister, registerUser);
-    router.post("/login", validateLogin, loginUser);
-
-    // Protected routes
-    // Protected route with enhanced error handling
-    router.get("/me", protect, async (req, res, next) => {
-      try {
-        await getCurrentUser(req, res);
-      } catch (err) {
-        console.error('Error in /me route handler:', err);
-        next(err);
-      }
-    });
-    router.put("/update", protect, updateUser);
-    router.delete("/delete", protect, deleteUser);
-    
-    // Logout routes
-    router.post('/logout', protect, logoutUser);
-    router.post('/logout-all', protect, logoutAllDevices);
-
-  return router;
-}
+module.exports = router;

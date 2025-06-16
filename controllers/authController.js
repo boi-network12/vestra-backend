@@ -13,17 +13,17 @@ const generateToken = (id) => {
 // Register User
 exports.register = async (req, res) => {
   try {
-    const { username, email, password, firstName, lastName, middleName } = req.body;
+    const { email, password, firstName, lastName, middleName } = req.body;
 
     // Validate required fields
-    if (!username || !email || !password || !firstName || !lastName) {
+    if (!email || !password || !firstName || !lastName) {
       return res.status(400).json({ success: false, message: 'All required fields must be provided' });
     }
 
     // Check if user exists
-    const userExists = await User.findOne({ $or: [{ email }, { username }] });
+    const userExists = await User.findOne({ email });
     if (userExists) {
-      return res.status(400).json({ success: false, message: 'Email or username already taken' });
+      return res.status(400).json({ success: false, message: 'Email already taken' });
     }
 
     // Get location from request
@@ -32,7 +32,6 @@ exports.register = async (req, res) => {
 
     // Create user
     const user = await User.create({
-      username,
       email,
       password,
       profile: {
@@ -44,15 +43,22 @@ exports.register = async (req, res) => {
       createdAt: new Date(),
     });
 
+    // Generate username
+    const username = `user_${user._id.toString().slice(0, 6)}`;
+    user.username = username;
+    await user.save({ validateBeforeSave: false });
+
     // Generate and send verification code
     const verificationToken = user.createVerificationToken();
     await user.save({ validateBeforeSave: false });
+    console.log('Generated OTP for registration:', verificationToken, 'for email:', email); // Debug log
 
     try {
       await sendVerificationEmail(email, firstName, verificationToken);
       user.verificationMethod = 'email';
       await user.save({ validateBeforeSave: false });
     } catch (err) {
+      console.error('Email sending error during registration:', err);
       user.verificationMethod = 'manual';
       await user.save({ validateBeforeSave: false });
     }
@@ -83,25 +89,116 @@ exports.register = async (req, res) => {
 exports.verifyUser = async (req, res) => {
   try {
     const { code } = req.body;
-    const hashedCode = crypto.createHash('sha256').update(code).digest('hex');
+    if (!code) {
+      return res.status(400).json({ success: false, message: 'Verification code is required' });
+    }
 
+    console.log('Received OTP for verification:', code); // Debug log
     const user = await User.findOne({
-      verificationToken: hashedCode,
+      verificationToken: code, // Compare plain OTP
       verificationTokenExpires: { $gt: Date.now() },
     });
 
     if (!user) {
-      return res.status(400).json({ success: false, message: 'Invalid or expired code' });
+      console.log('No user found with matching OTP or OTP expired'); // Debug log
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid or expired code. Please request a new one.' 
+      });
     }
 
+    console.log('User verified:', user.email); // Debug log
     user.isVerified = true;
     user.verificationToken = undefined;
     user.verificationTokenExpires = undefined;
+    user.verificationAttempts = { count: 0, lastAttempt: undefined };
     await user.save();
 
-    res.json({ success: true, message: 'Account verified successfully' });
+    res.json({ 
+      success: true, 
+      message: 'Account verified successfully',
+      data: {
+        _id: user._id,
+        username: user.username,
+        email: user.email,
+      },
+    });
   } catch (err) {
     console.error('Verify user error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// Check username availability
+exports.checkUsername = async (req, res) => {
+  try {
+    const { username } = req.body;
+    if (!username) {
+      return res.status(400).json({ success: false, message: 'Username is required' });
+    }
+
+    const userExists = await User.findOne({ username });
+    if (userExists) {
+      return res.status(400).json({ success: false, message: 'Username is already taken' });
+    }
+
+    res.json({ success: true, message: 'Username is available' });
+  } catch (err) {
+    console.error('Check username error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// Resend Verification Code
+exports.resendVerificationCode = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email is required' });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (user.isVerified) {
+      return res.status(400).json({ success: false, message: 'Account is already verified' });
+    }
+
+    // Check daily OTP request limit
+    const today = new Date().setHours(0, 0, 0, 0);
+    if (user.verificationAttempts.lastAttempt && 
+        new Date(user.verificationAttempts.lastAttempt).setHours(0, 0, 0, 0) === toesday) {
+      if (user.verificationAttempts.count >= 3) {
+        return res.status(429).json({
+          success: false,
+          message: 'Too many verification requests today. Please try again tomorrow.',
+        });
+      }
+      user.verificationAttempts.count += 1;
+    } else {
+      user.verificationAttempts.count = 1;
+      user.verificationAttempts.lastAttempt = new Date();
+    }
+
+    // Generate new verification code
+    const verificationToken = user.createVerificationToken();
+    await user.save({ validateBeforeSave: false });
+    console.log('Generated OTP for resend:', verificationToken, 'for email:', email); // Debug log
+
+    try {
+      await sendVerificationEmail(user.email, user.profile.firstName, verificationToken);
+      res.json({ success: true, message: 'Verification code sent to your email' });
+    } catch (err) {
+      console.error('Email sending error:', err);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Failed to send verification email' 
+      });
+    }
+  } catch (err) {
+    console.error('Resend verification code error:', err);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
@@ -139,12 +236,14 @@ exports.login = async (req, res) => {
       // Generate and send new verification code
       const verificationToken = user.createVerificationToken();
       await user.save({ validateBeforeSave: false });
+      console.log('Generated OTP for unverified login:', verificationToken, 'for email:', email); // Debug log
 
       try {
         await sendVerificationEmail(user.email, user.profile.firstName, verificationToken);
         user.verificationMethod = 'email';
         await user.save({ validateBeforeSave: false });
       } catch (err) {
+        console.error('Email sending error during login:', err);
         user.verificationMethod = 'manual';
         await user.save({ validateBeforeSave: false });
         return res.status(500).json({ success: false, message: 'Failed to send verification email' });
@@ -248,64 +347,10 @@ exports.resetPassword = async (req, res) => {
   }
 };
 
-// Resend Verification Code
-exports.resendVerificationCode = async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({ success: false, message: 'Please provide an email' });
-    }
-
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'No user found with that email' });
-    }
-
-    if (user.isVerified) {
-      return res.status(400).json({ success: false, message: 'Account is already verified' });
-    }
-
-    // Check daily OTP request limit
-    const today = new Date().setHours(0, 0, 0, 0);
-    if (user.verificationAttempts.lastAttempt && new Date(user.verificationAttempts.lastAttempt).setHours(0, 0, 0, 0) === today) {
-      if (user.verificationAttempts.count >= 3) {
-        return res.status(429).json({
-          success: false,
-          message: 'Too many verification requests today. Please try again tomorrow.',
-        });
-      }
-      user.verificationAttempts.count += 1;
-    } else {
-      user.verificationAttempts.count = 1;
-      user.verificationAttempts.lastAttempt = new Date();
-    }
-
-    // Generate and send new verification code
-    const verificationToken = user.createVerificationToken();
-    await user.save({ validateBeforeSave: false });
-
-    try {
-      await sendVerificationEmail(user.email, user.profile.firstName, verificationToken);
-      user.verificationMethod = 'email';
-      await user.save({ validateBeforeSave: false });
-    } catch (err) {
-      user.verificationMethod = 'manual';
-      await user.save({ validateBeforeSave: false });
-      return res.status(500).json({ success: false, message: 'Failed to send verification email' });
-    }
-
-    res.json({ success: true, message: 'Verification code sent to your email' });
-  } catch (err) {
-    console.error('Resend verification code error:', err);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-};
-
 // Subscribe to Premium Plan
 exports.subscribe = async (req, res) => {
   try {
-    const { plan } = req.body; // 'Premium' or 'Elite'
+    const { plan } = req.body;
     const user = await User.findById(req.user._id);
 
     if (!user) {
@@ -317,7 +362,7 @@ exports.subscribe = async (req, res) => {
     }
 
     // TODO: Integrate with payment gateway (e.g., Stripe)
-    const paymentSuccessful = true; // Replace with actual payment processing
+    const paymentSuccessful = true;
 
     if (!paymentSuccessful) {
       return res.status(400).json({ success: false, message: 'Payment processing failed' });
@@ -326,7 +371,7 @@ exports.subscribe = async (req, res) => {
     // Update subscription
     user.subscription.plan = plan;
     user.subscription.status = 'active';
-    user.subscription.expiryDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+    user.subscription.expiryDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     await user.save();
 
     // Log subscription change

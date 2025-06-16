@@ -5,11 +5,11 @@ const crypto = require('crypto');
 const userSchema = new mongoose.Schema({
   username: {
     type: String,
-    required: [true, 'Username is required'],
     unique: true,
     trim: true,
     minlength: [3, 'Username must be at least 3 characters'],
     maxlength: [30, 'Username cannot exceed 30 characters'],
+    match: [/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'],
   },
   email: {
     type: String,
@@ -192,23 +192,21 @@ userSchema.methods.createPasswordResetToken = function () {
   return resetToken;
 };
 
+
 // Create verification token
 userSchema.methods.createVerificationToken = function () {
-  const verificationToken = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit numeric code
-  this.verificationToken = crypto
-    .createHash('sha256')
-    .update(verificationToken)
-    .digest('hex');
-  this.verificationTokenExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+  const verificationToken = Math.floor(100000 + Math.random() * 900000).toString();
+  this.verificationToken = verificationToken; // Store plain OTP
+  this.verificationTokenExpires = Date.now() + 30 * 60 * 1000; // 30 minutes
   return verificationToken;
 };
 
-userSchema.add({
-  verificationAttempts: {
-    count: { type: Number, default: 0 },
-    lastAttempt: { type: Date },
-  },
-});
+// userSchema.add({
+//   verificationAttempts: {
+//     count: { type: Number, default: 0 },
+//     lastAttempt: { type: Date },
+//   },
+// });
 
 // Compare password
 userSchema.methods.comparePassword = async function (candidatePassword) {

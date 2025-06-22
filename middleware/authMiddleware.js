@@ -2,7 +2,6 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { RateLimiterMemory } = require('rate-limiter-flexible');
 
-// Rate limiter for auth attempts
 const authLimiter = new RateLimiterMemory({
   points: 10, // 10 attempts
   duration: 3600, // per hour per IP
@@ -15,11 +14,9 @@ exports.protect = async (req, res, next) => {
 
     // Get token from header or cookies
     let token;
-    if (
-      req.headers.authorization &&
-      req.headers.authorization.startsWith('Bearer')
-    ) {
-      token = req.headers.authorization.split(' ')[1];
+    const authHeader = req.headers.authorization || req.headers.Authorization; 
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
     } else if (req.cookies?.accessToken) {
       token = req.cookies.accessToken;
     }
@@ -31,16 +28,25 @@ exports.protect = async (req, res, next) => {
       });
     }
 
+
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Check if user exists
-    const currentUser = await User.findById(decoded.id).select('+sessions');
+    let currentUser = await User.findById(decoded.id).select('+sessions');
     if (!currentUser) {
       return res.status(401).json({
         success: false,
         message: 'User associated with this token no longer exists',
       });
+    }
+
+    // Ensure linkedAccounts is initialized
+    if (!currentUser.linkedAccounts) {
+      currentUser.linkedAccounts = [];
+      await currentUser.save({ validateBeforeSave: false });
+      // Reload user to ensure consistency
+      currentUser = await User.findById(decoded.id).select('+sessions');
     }
 
     // Check if session is valid
@@ -66,7 +72,12 @@ exports.protect = async (req, res, next) => {
     req.user = currentUser;
     next();
   } catch (err) {
-    console.error('Authentication Error:', err.message);
+    console.error('Authentication Error:', {
+      message: err.message,
+      stack: err.stack,
+      path: req.path,
+      method: req.method,
+    });
 
     let message = 'Not authorized to access this route';
     let status = 401;
@@ -78,6 +89,10 @@ exports.protect = async (req, res, next) => {
     } else if (err.message.includes('Rate limit')) {
       message = 'Too many authentication attempts. Try again later';
       status = 429;
+    } else {
+      // Handle unexpected errors
+      message = 'Authentication failed due to server error';
+      status = 500;
     }
 
     res.status(status).json({

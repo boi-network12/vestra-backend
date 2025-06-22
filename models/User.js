@@ -21,7 +21,8 @@ const userSchema = new mongoose.Schema({
   },
   phoneNumber: {
     type: String,
-    default: ""
+    unique: true,
+    sparse: true
   },
   password: {
     type: String,
@@ -125,6 +126,21 @@ const userSchema = new mongoose.Schema({
   timestamps: true,
 });
 
+userSchema.add({
+  linkedAccounts: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: [], 
+  }],
+});
+
+userSchema.add({
+  verificationAttempts: {
+    count: { type: Number, default: 0 },
+    lastAttempt: { type: Date },
+  },
+});
+
 // Password hashing
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
@@ -136,6 +152,17 @@ userSchema.pre('save', async function (next) {
 userSchema.pre('save', function (next) {
   if (this.isModified('password') && !this.isNew) {
     this.passwordChangedAt = Date.now() - 1000;
+  }
+  next();
+});
+
+// Add to userSchema.pre('save')
+userSchema.pre('save', function (next) {
+  if (!this.sessions) {
+    this.sessions = [];
+  }
+  if (!this.linkedAccounts) {
+    this.linkedAccounts = [];
   }
   next();
 });

@@ -74,3 +74,30 @@ exports.sendWelcomeEmail = async (email, name) => {
     throw new Error('Email sending failed');
   }
 };
+
+exports.sendLoginNotifyEmail = async (email, name, city, country, device, ipAddress, loginTime) => {
+  try {
+    const html = compileTemplate('loginNotify', {
+      name,
+      city: city || 'Unknown',
+      country: country || 'Unknown',
+      device: device || 'Unknown',
+      ipAddress: ipAddress || 'Unknown',
+      loginTime: loginTime.toLocaleString() || new Date().toLocaleString(),
+      year: new Date().getFullYear(),
+    })
+
+    const mailOptions = {
+      from: `"Vestra" <${process.env.EMAIL_USERNAME}>`,
+      to: email,
+      subject: 'New Login to Your Vestra Account',
+      html,
+    };
+
+    await transporter.sendMail(mailOptions);
+    console.log(`Login notification email sent to ${email}`);
+  } catch (error) {
+    console.error(`Error sending login notification email to ${email}:`, error);
+    throw new Error('Email sending failed');
+  }
+}

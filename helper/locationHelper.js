@@ -12,6 +12,7 @@ const processLocation = async (locationFromRequest, ipAddress) => {
     city: '',
     country: ''
   };
+
   
   try {
     if (locationFromRequest && locationFromRequest.latitude && locationFromRequest.longitude) {
